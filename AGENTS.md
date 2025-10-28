@@ -14,7 +14,7 @@
 - `cargo test -p rloop`: Useful when iterating on Rust unit tests embedded in `src/`.
 
 ## Coding Style & Naming Conventions
-- Python: Ruff enforces 120-character lines, single quotes for strings, and PEP 8/pep8-naming (`EventLoopPolicy`, `RLoopError`). Prefer async/await-friendly helpers and avoid implicit event-loop globals.
+- Python: Ruff enforces 120-character lines, single quotes for strings, and PEP 8 naming conventions (enforced by pep8-naming; e.g., `EventLoopPolicy`, `RLoopError`). Prefer async/await-friendly helpers and avoid implicit event-loop globals.
 - Rust: Follow `cargo fmt` defaults (4-space indentation). Module names use snake_case; public types favor CamelCase (`EventLoop`, `TcpStreamState`). Use explicit `use` lists to keep FFI boundaries clear.
 - Keep Rust↔Python boundaries in `py.rs` thin; place heavy logic in pure Rust modules.
 
