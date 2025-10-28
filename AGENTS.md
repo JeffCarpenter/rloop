@@ -24,7 +24,7 @@
 - Run `make test` before committing; add Criterion benchmarks only when a performance regression is suspected.
 
 ## Commit & Pull Request Guidelines
-- Commit subjects follow the short, imperative style seen in history (“Add UDP support”). Use focused commits grouping related changes across Rust and Python layers.
+- Commit subjects follow the short, imperative style seen in the git commit history (“Add UDP support”). Use focused commits grouping related changes across Rust and Python layers.
 - PRs should summarize behavior changes, list new commands or configuration toggles, and note any compatibility caveats (Unix-only features, Python version assumptions). Link issues when available and attach benchmark or test output for performance-sensitive work.
 
 ## Security & Configuration Notes
