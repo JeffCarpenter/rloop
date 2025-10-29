@@ -7,14 +7,16 @@ env:
 
 jobs:
   wheels:
-    name: wheel ${{ matrix.platform || matrix.os }}(${{ matrix.target }}) - ${{ matrix.manylinux || 'auto' }}
+    name: wheel ${{ matrix.platform || matrix.os }}(${{ matrix.target }})${{ matrix.manylinux && format(' - {0}', matrix.manylinux) || '' }}
+    continue-on-error: ${{ matrix.platform == 'windows' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, macos]
-        target: [x86_64, aarch64]
-        manylinux: [auto]
         include:
+          - os: ubuntu
+            platform: linux
+            target: x86_64
+            manylinux: auto
           - os: ubuntu
             platform: linux
             target: x86_64
@@ -23,15 +25,18 @@ jobs:
           - os: ubuntu
             platform: linux
             target: i686
+            manylinux: auto
             interpreter: 3.9 3.10 3.11 3.12 3.13 3.14
           - os: ubuntu
             platform: linux
             target: aarch64
+            manylinux: auto
             # rust-cross/manylinux2014-cross:aarch64 has issues with `ring`
             #container: ghcr.io/rust-cross/manylinux_2_28-cross:aarch64
           - os: ubuntu
             platform: linux
             target: armv7
+            manylinux: auto
             interpreter: 3.9 3.10 3.11 3.12 3.13 3.14
           - os: ubuntu
             platform: linux
@@ -47,15 +52,28 @@ jobs:
             manylinux: musllinux_1_1
             interpreter: 3.9 3.10 3.11 3.12 3.13 3.14
           - os: macos
+            platform: macos
+            target: x86_64
+          - os: macos
+            platform: macos
             target: x86_64
             interpreter: pypy3.9 pypy3.10 pypy3.11
           - os: macos
+            platform: macos
+            target: aarch64
+          - os: macos
+            platform: macos
             target: aarch64
             interpreter: pypy3.9 pypy3.10 pypy3.11
+          - os: windows
+            platform: windows
+            target: x86_64
+            interpreter: 3.9 3.10 3.11 3.12
     runs-on: ${{ matrix.os }}-latest
     steps:
       - uses: actions/checkout@v5
       - uses: pyo3/maturin-action@v1
+        if: matrix.platform == 'linux'
         with:
           rust-toolchain: stable
           command: build
@@ -64,10 +82,17 @@ jobs:
           manylinux: ${{ matrix.manylinux || 'auto' }}
           container: ${{ matrix.container }}
           docker-options: -e CI
+      - uses: pyo3/maturin-action@v1
+        if: matrix.platform != 'linux'
+        with:
+          rust-toolchain: stable
+          command: build
+          args: --release --out dist --interpreter ${{ matrix.interpreter || env.PY_ALL }}
+          target: ${{ matrix.target }}
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.platform || matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'auto' }}
+          name: dist-${{ matrix.platform || matrix.os }}-${{ matrix.target }}${{ matrix.manylinux && format('-{0}', matrix.manylinux) || '' }}
           path: dist
 
   wheels-pgo:
