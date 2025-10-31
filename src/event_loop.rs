@@ -2,9 +2,16 @@ use std::{
     collections::{BinaryHeap, VecDeque},
     io::Read,
     mem,
-    os::fd::{AsRawFd, FromRawFd},
     sync::{Arc, Mutex, RwLock, atomic},
     time::{Duration, Instant},
+};
+
+#[cfg(windows)]
+use std::os::windows::io::{AsRawSocket, RawSocket};
+#[cfg(unix)]
+use std::{
+    convert::TryFrom,
+    os::fd::{AsRawFd, FromRawFd},
 };
 
 use anyhow::Result;
@@ -46,6 +53,17 @@ pub struct EventLoopRunState {
     events: event::Events,
     pub read_buf: Box<[u8]>,
     tick_last: u128,
+}
+
+#[cfg(unix)]
+unsafe fn socket_from_stable(fd: usize) -> socket2::Socket {
+    let raw = i32::try_from(fd).expect("file descriptor exceeds RawFd range");
+    unsafe { socket2::Socket::from_raw_fd(raw) }
+}
+
+#[cfg(windows)]
+unsafe fn socket_from_stable(fd: usize) -> socket2::Socket {
+    unsafe { socket2::Socket::from_raw_socket(fd as RawSocket) }
 }
 
 #[pyclass(frozen, subclass, module = "rloop._rloop")]
@@ -232,10 +250,18 @@ impl EventLoop {
             let streams = self.tcp_lstreams.pin();
             let lstreams = streams.get(&handle.server.fd).unwrap().pin();
             while let Ok((stream, _)) = listener.accept() {
-                let fd = stream.as_raw_fd() as usize;
+                let fd = {
+                    #[cfg(unix)]
+                    {
+                        stream.as_raw_fd() as usize
+                    }
+                    #[cfg(windows)]
+                    {
+                        stream.as_raw_socket() as usize
+                    }
+                };
                 let token = Token(fd);
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 let (pytransport, stream_handle) = handle.server.new_stream(py, stream);
                 transports.insert(fd, pytransport);
                 lstreams.insert(fd);
@@ -302,7 +328,16 @@ impl EventLoop {
     }
 
     pub(crate) fn tcp_listener_add(&self, listener: TcpListener, server: TCPServerRef) {
-        let fd = listener.as_raw_fd() as usize;
+        let fd = {
+            #[cfg(unix)]
+            {
+                listener.as_raw_fd() as usize
+            }
+            #[cfg(windows)]
+            {
+                listener.as_raw_socket() as usize
+            }
+        };
         let token = Token(fd);
         let mut source = Source::TCPListener(listener);
         let guard_poll = self.io.lock().unwrap();
@@ -318,8 +353,7 @@ impl EventLoop {
         if let Some(handle) = self.handles_io.pin().remove(&token) {
             if let IOHandle::TCPListener(_) = handle {
                 self.tcp_lstreams.pin().remove(&fd);
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 let guard_poll = self.io.lock().unwrap();
                 guard_poll.registry().deregister(&mut source)?;
                 return Ok(true);
@@ -341,8 +375,7 @@ impl EventLoop {
 
                     let interests = *interest_prev | interest;
                     {
-                        #[allow(clippy::cast_possible_wrap)]
-                        let mut source = Source::FD(fd as i32);
+                        let mut source = Source::socket(fd);
                         let guard_poll = self.io.lock().unwrap();
                         _ = guard_poll.registry().reregister(&mut source, token, interests);
                     }
@@ -351,8 +384,7 @@ impl EventLoop {
                 unreachable!()
             },
             || {
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 {
                     let guard_poll = self.io.lock().unwrap();
                     _ = guard_poll.registry().register(&mut source, token, interest);
@@ -373,8 +405,7 @@ impl EventLoop {
         }) {
             Ok(None) => {}
             Ok(_) => {
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 let guard_poll = self.io.lock().unwrap();
                 _ = guard_poll.registry().deregister(&mut source);
             }
@@ -382,8 +413,7 @@ impl EventLoop {
                 self.handles_io.pin().update(token, |io_handle| {
                     if let IOHandle::TCPStream(interest_ex) = io_handle {
                         let interest_new = interest_ex.remove(interest).unwrap();
-                        #[allow(clippy::cast_possible_wrap)]
-                        let mut source = Source::FD(fd as i32);
+                        let mut source = Source::socket(fd);
                         let guard_poll = self.io.lock().unwrap();
                         _ = guard_poll.registry().reregister(&mut source, token, interest_new);
                         return IOHandle::TCPStream(interest_new);
@@ -430,8 +460,7 @@ impl EventLoop {
 
                     let interests = *interest_prev | interest;
                     {
-                        #[allow(clippy::cast_possible_wrap)]
-                        let mut source = Source::FD(fd as i32);
+                        let mut source = Source::socket(fd);
                         let guard_poll = self.io.lock().unwrap();
                         _ = guard_poll.registry().reregister(&mut source, token, interests);
                     }
@@ -440,8 +469,7 @@ impl EventLoop {
                 unreachable!()
             },
             || {
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 {
                     let guard_poll = self.io.lock().unwrap();
                     _ = guard_poll.registry().register(&mut source, token, interest);
@@ -463,8 +491,7 @@ impl EventLoop {
         }) {
             Ok(None) => {}
             Ok(_) => {
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 let guard_poll = self.io.lock().unwrap();
                 _ = guard_poll.registry().deregister(&mut source);
             }
@@ -472,8 +499,7 @@ impl EventLoop {
                 self.handles_io.pin().update(token, |io_handle| {
                     if let IOHandle::UDPSocket(interest_ex) = io_handle {
                         let interest_new = interest_ex.remove(interest).unwrap();
-                        #[allow(clippy::cast_possible_wrap)]
-                        let mut source = Source::FD(fd as i32);
+                        let mut source = Source::socket(fd);
                         let guard_poll = self.io.lock().unwrap();
                         _ = guard_poll.registry().reregister(&mut source, token, interest_new);
                         return IOHandle::UDPSocket(interest_new);
@@ -886,18 +912,11 @@ impl EventLoop {
     fn _ssock_set(&self, fd_r: usize, fd_w: usize) -> PyResult<()> {
         {
             let mut guard = self.ssock.write().unwrap();
-            *guard = Some(unsafe {
-                (
-                    #[allow(clippy::cast_possible_wrap)]
-                    socket2::Socket::from_raw_fd(fd_r as i32),
-                    #[allow(clippy::cast_possible_wrap)]
-                    socket2::Socket::from_raw_fd(fd_w as i32),
-                )
-            });
+            *guard = Some(unsafe { (socket_from_stable(fd_r), socket_from_stable(fd_w)) });
         }
 
         let token = Token(fd_r);
-        let mut source = Source::FD(fd_r.try_into()?);
+        let mut source = Source::socket(fd_r);
         let interest = Interest::READABLE;
 
         {
@@ -912,8 +931,7 @@ impl EventLoop {
     fn _ssock_del(&self, fd_r: usize) -> PyResult<()> {
         let token = Token(fd_r);
         if let Some(IOHandle::Signals) = self.handles_io.pin().remove(&token) {
-            #[allow(clippy::cast_possible_wrap)]
-            let mut source = Source::FD(fd_r as i32);
+            let mut source = Source::socket(fd_r);
             let guard_poll = self.io.lock().unwrap();
             guard_poll.registry().deregister(&mut source)?;
         }
@@ -1007,8 +1025,7 @@ impl EventLoop {
             |io_handle| {
                 if let IOHandle::Py(data) = io_handle {
                     let interest = data.interest | Interest::READABLE;
-                    #[allow(clippy::cast_possible_wrap)]
-                    let mut source = Source::FD(fd as i32);
+                    let mut source = Source::socket(fd);
                     let guard_poll = self.io.lock().unwrap();
                     _ = guard_poll.registry().reregister(&mut source, token, data.interest);
                     return IOHandle::Py(PyHandleData {
@@ -1020,8 +1037,7 @@ impl EventLoop {
                 unreachable!()
             },
             || {
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 let interest = Interest::READABLE;
                 {
                     let guard_poll = self.io.lock().unwrap();
@@ -1049,8 +1065,7 @@ impl EventLoop {
         }) {
             Ok(None) => false,
             Ok(_) => {
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 let guard_poll = self.io.lock().unwrap();
                 _ = guard_poll.registry().deregister(&mut source);
                 true
@@ -1059,8 +1074,7 @@ impl EventLoop {
                 self.handles_io.pin().update(token, |io_handle| {
                     if let IOHandle::Py(data) = io_handle {
                         let interest = Interest::WRITABLE;
-                        #[allow(clippy::cast_possible_wrap)]
-                        let mut source = Source::FD(fd as i32);
+                        let mut source = Source::socket(fd);
                         let guard_poll = self.io.lock().unwrap();
                         _ = guard_poll.registry().reregister(&mut source, token, interest);
                         return IOHandle::Py(PyHandleData {
@@ -1097,8 +1111,7 @@ impl EventLoop {
             |io_handle| {
                 if let IOHandle::Py(data) = io_handle {
                     let interest = data.interest | Interest::WRITABLE;
-                    #[allow(clippy::cast_possible_wrap)]
-                    let mut source = Source::FD(fd as i32);
+                    let mut source = Source::socket(fd);
                     let guard_poll = self.io.lock().unwrap();
                     _ = guard_poll.registry().reregister(&mut source, token, data.interest);
                     return IOHandle::Py(PyHandleData {
@@ -1110,8 +1123,7 @@ impl EventLoop {
                 unreachable!()
             },
             || {
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 let interest = Interest::WRITABLE;
                 {
                     let guard_poll = self.io.lock().unwrap();
@@ -1139,8 +1151,7 @@ impl EventLoop {
         }) {
             Ok(None) => false,
             Ok(_) => {
-                #[allow(clippy::cast_possible_wrap)]
-                let mut source = Source::FD(fd as i32);
+                let mut source = Source::socket(fd);
                 let guard_poll = self.io.lock().unwrap();
                 _ = guard_poll.registry().deregister(&mut source);
                 true
@@ -1149,8 +1160,7 @@ impl EventLoop {
                 self.handles_io.pin().update(token, |io_handle| {
                     if let IOHandle::Py(data) = io_handle {
                         let interest = Interest::READABLE;
-                        #[allow(clippy::cast_possible_wrap)]
-                        let mut source = Source::FD(fd as i32);
+                        let mut source = Source::socket(fd);
                         let guard_poll = self.io.lock().unwrap();
                         _ = guard_poll.registry().reregister(&mut source, token, interest);
                         return IOHandle::Py(PyHandleData {
