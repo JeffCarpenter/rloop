@@ -5,6 +5,7 @@ pub mod event_loop;
 pub mod handles;
 mod io;
 mod log;
+mod os;
 mod py;
 mod server;
 mod sock;
