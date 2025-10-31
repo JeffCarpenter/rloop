@@ -27,35 +27,35 @@ impl OsSocket {
     }
 
     #[cfg(unix)]
-    fn register(&self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
+    fn register(self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
         let mut fd = SourceFd(&self.raw);
         registry.register(&mut fd, token, interests)
     }
 
     #[cfg(windows)]
-    fn register(&self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
+    fn register(self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
         registry.register_raw_socket(self.raw, token, interests)
     }
 
     #[cfg(unix)]
-    fn reregister(&self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
+    fn reregister(self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
         let mut fd = SourceFd(&self.raw);
         registry.reregister(&mut fd, token, interests)
     }
 
     #[cfg(windows)]
-    fn reregister(&self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
+    fn reregister(self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
         registry.reregister_raw_socket(self.raw, token, interests)
     }
 
     #[cfg(unix)]
-    fn deregister(&self, registry: &Registry) -> io::Result<()> {
+    fn deregister(self, registry: &Registry) -> io::Result<()> {
         let mut fd = SourceFd(&self.raw);
         registry.deregister(&mut fd)
     }
 
     #[cfg(windows)]
-    fn deregister(&self, registry: &Registry) -> io::Result<()> {
+    fn deregister(self, registry: &Registry) -> io::Result<()> {
         registry.deregister_raw_socket(self.raw)
     }
 }
@@ -76,7 +76,7 @@ impl MioSource for Source {
     #[inline]
     fn register(&mut self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
         match self {
-            Self::Socket(socket) => socket.register(registry, token, interests),
+            Self::Socket(socket) => (*socket).register(registry, token, interests),
             Self::TCPListener(listener) => listener.register(registry, token, interests),
         }
     }
@@ -84,7 +84,7 @@ impl MioSource for Source {
     #[inline]
     fn reregister(&mut self, registry: &Registry, token: Token, interests: Interest) -> io::Result<()> {
         match self {
-            Self::Socket(socket) => socket.reregister(registry, token, interests),
+            Self::Socket(socket) => (*socket).reregister(registry, token, interests),
             Self::TCPListener(listener) => listener.reregister(registry, token, interests),
         }
     }
@@ -92,7 +92,7 @@ impl MioSource for Source {
     #[inline]
     fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
         match self {
-            Self::Socket(socket) => socket.deregister(registry),
+            Self::Socket(socket) => (*socket).deregister(registry),
             Self::TCPListener(listener) => listener.deregister(registry),
         }
     }
