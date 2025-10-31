@@ -1,6 +1,3 @@
-#[cfg(unix)]
-use std::os::fd::{AsRawFd, FromRawFd};
-
 use mio::{Interest, net::UdpSocket};
 use pyo3::{IntoPyObject, IntoPyObjectExt, prelude::*, types::PyBytes};
 use std::{
@@ -17,6 +14,7 @@ use crate::{
     event_loop::{EventLoop, EventLoopRunState},
     handles::Handle,
     log::LogExc,
+    os::socket::{self, SocketHandle},
     sock::SocketWrapper,
 };
 
@@ -56,7 +54,7 @@ impl UDPTransport {
         socket_family: i32,
         remote_addr: Option<SocketAddr>,
     ) -> Self {
-        let fd = socket.as_raw_fd() as usize;
+        let fd = socket::socket_token(&socket);
         let state = UDPTransportState {
             socket,
             remote_addr,
@@ -98,8 +96,9 @@ impl UDPTransport {
         pysock: (i32, i32),
         proto_factory: Py<PyAny>,
         remote_addr_tup: Option<(String, u16)>,
-    ) -> Self {
-        let sock = unsafe { socket2::Socket::from_raw_fd(pysock.0) };
+    ) -> PyResult<Self> {
+        let handle = SocketHandle::try_from_i32(pysock.0)?;
+        let sock = handle.into_socket2();
         _ = sock.set_nonblocking(true);
         let stds: std::net::UdpSocket = sock.into();
         let socket = UdpSocket::from_std(stds);
@@ -107,7 +106,14 @@ impl UDPTransport {
         let remote_addr = remote_addr_tup.map(|v| SocketAddr::new(IpAddr::from_str(&v.0).unwrap(), v.1));
         let proto = proto_factory.bind(py).call0().unwrap();
 
-        Self::new(py, pyloop.clone_ref(py), socket, proto, pysock.1, remote_addr)
+        Ok(Self::new(
+            py,
+            pyloop.clone_ref(py),
+            socket,
+            proto,
+            pysock.1,
+            remote_addr,
+        ))
     }
 
     pub(crate) fn attach(pyself: &Py<Self>, py: Python) -> PyResult<Py<PyAny>> {

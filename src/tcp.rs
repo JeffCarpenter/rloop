@@ -1,6 +1,3 @@
-#[cfg(unix)]
-use std::os::fd::{AsRawFd, FromRawFd};
-
 use anyhow::Result;
 use mio::{
     Interest,
@@ -19,6 +16,7 @@ use crate::{
     event_loop::{EventLoop, EventLoopRunState},
     handles::{BoxedHandle, CBHandle, Handle},
     log::LogExc,
+    os::socket::{self, SocketHandle},
     py::{asyncio_proto_buf, copy_context},
     sock::SocketWrapper,
     utils::syscall,
@@ -42,7 +40,8 @@ impl TCPServer {
     }
 
     pub(crate) fn listen(&self, py: Python, pyloop: Py<EventLoop>) -> Result<()> {
-        let sock = unsafe { socket2::Socket::from_raw_fd(self.fd) };
+        let handle = SocketHandle::try_from_i32(self.fd)?;
+        let sock = handle.into_socket2();
         sock.listen(self.backlog)?;
 
         let stdl: std::net::TcpListener = sock.into();
@@ -163,7 +162,7 @@ impl TCPTransport {
         socket_family: i32,
         lfd: Option<usize>,
     ) -> Self {
-        let fd = stream.as_raw_fd() as usize;
+        let fd = socket::socket_token(&stream);
         let state = TCPTransportState {
             stream,
             write_buf: VecDeque::new(),
@@ -208,15 +207,21 @@ impl TCPTransport {
         }
     }
 
-    pub(crate) fn from_py(py: Python, pyloop: &Py<EventLoop>, pysock: (i32, i32), proto_factory: Py<PyAny>) -> Self {
-        let sock = unsafe { socket2::Socket::from_raw_fd(pysock.0) };
+    pub(crate) fn from_py(
+        py: Python,
+        pyloop: &Py<EventLoop>,
+        pysock: (i32, i32),
+        proto_factory: Py<PyAny>,
+    ) -> PyResult<Self> {
+        let handle = SocketHandle::try_from_i32(pysock.0)?;
+        let sock = handle.into_socket2();
         _ = sock.set_nonblocking(true);
         let stdl: std::net::TcpStream = sock.into();
         let stream = TcpStream::from_std(stdl);
 
         let proto = proto_factory.bind(py).call0().unwrap();
 
-        Self::new(py, pyloop.clone_ref(py), stream, proto, pysock.1, None)
+        Ok(Self::new(py, pyloop.clone_ref(py), stream, proto, pysock.1, None))
     }
 
     pub(crate) fn attach(pyself: &Py<Self>, py: Python) -> PyResult<Py<PyAny>> {

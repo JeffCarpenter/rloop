@@ -2,7 +2,7 @@ use std::{
     collections::{BinaryHeap, VecDeque},
     io::Read,
     mem,
-    os::fd::{AsRawFd, FromRawFd},
+    os::fd::AsRawFd,
     sync::{Arc, Mutex, RwLock, atomic},
     time::{Duration, Instant},
 };
@@ -15,6 +15,7 @@ use crate::{
     handles::{BoxedHandle, CBHandle, Handle, TimerHandle},
     io::Source,
     log::{LogExc, log_exc_to_py_ctx},
+    os::socket::{self, SocketHandle},
     py::{copy_context, weakset},
     server::Server,
     tcp::{TCPReadHandle, TCPServer, TCPServerRef, TCPTransport, TCPWriteHandle},
@@ -232,7 +233,7 @@ impl EventLoop {
             let streams = self.tcp_lstreams.pin();
             let lstreams = streams.get(&handle.server.fd).unwrap().pin();
             while let Ok((stream, _)) = listener.accept() {
-                let fd = stream.as_raw_fd() as usize;
+                let fd = socket::socket_token(&stream);
                 let token = Token(fd);
                 #[allow(clippy::cast_possible_wrap)]
                 let mut source = Source::FD(fd as i32);
@@ -884,25 +885,22 @@ impl EventLoop {
     }
 
     fn _ssock_set(&self, fd_r: usize, fd_w: usize) -> PyResult<()> {
-        {
-            let mut guard = self.ssock.write().unwrap();
-            *guard = Some(unsafe {
-                (
-                    #[allow(clippy::cast_possible_wrap)]
-                    socket2::Socket::from_raw_fd(fd_r as i32),
-                    #[allow(clippy::cast_possible_wrap)]
-                    socket2::Socket::from_raw_fd(fd_w as i32),
-                )
-            });
-        }
-
         let token = Token(fd_r);
-        let mut source = Source::FD(fd_r.try_into()?);
         let interest = Interest::READABLE;
 
+        let read_handle = SocketHandle::try_from_usize(fd_r)?;
         {
+            let mut source = read_handle.as_mio_source();
             let guard_poll = self.io.lock().unwrap();
             guard_poll.registry().register(&mut source, token, interest)?;
+        }
+        let read_socket = read_handle.into_socket2();
+
+        let write_socket = SocketHandle::try_from_usize(fd_w)?.into_socket2();
+
+        {
+            let mut guard = self.ssock.write().unwrap();
+            *guard = Some((read_socket, write_socket));
         }
         self.handles_io.pin().insert(token, IOHandle::Signals);
 
@@ -1173,7 +1171,7 @@ impl EventLoop {
         protocol_factory: Py<PyAny>,
     ) -> PyResult<(Py<TCPTransport>, Py<PyAny>)> {
         let rself = pyself.get();
-        let transport = TCPTransport::from_py(py, &pyself, sock, protocol_factory);
+        let transport = TCPTransport::from_py(py, &pyself, sock, protocol_factory)?;
         let fd = transport.fd;
         let pytransport = Py::new(py, transport)?;
         let proto = TCPTransport::attach(&pytransport, py)?;
@@ -1210,7 +1208,7 @@ impl EventLoop {
         remote_addr: Option<(String, u16)>,
     ) -> PyResult<(Py<UDPTransport>, Py<PyAny>)> {
         let rself = pyself.get();
-        let transport = UDPTransport::from_py(py, &pyself, sock, protocol_factory, remote_addr);
+        let transport = UDPTransport::from_py(py, &pyself, sock, protocol_factory, remote_addr)?;
         let fd = transport.fd;
         let pytransport = Py::new(py, transport)?;
         let proto = UDPTransport::attach(&pytransport, py)?;
