@@ -219,7 +219,7 @@ impl TCPTransport {
         let stdl: std::net::TcpStream = sock.into();
         let stream = TcpStream::from_std(stdl);
 
-        let proto = proto_factory.bind(py).call0().unwrap();
+        let proto = proto_factory.bind(py).call0()?;
 
         Ok(Self::new(py, pyloop.clone_ref(py), stream, proto, pysock.1, None))
     }

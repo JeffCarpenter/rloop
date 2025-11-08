@@ -54,12 +54,15 @@ impl SocketHandle {
     pub(crate) fn try_from_i32(fd: i32) -> Result<Self, TryFromIntError> {
         #[cfg(unix)]
         {
-            return Ok(unsafe { Self::from_raw(fd) });
+            Ok(unsafe { Self::from_raw(fd) })
         }
 
         #[cfg(windows)]
         {
-            let raw = usize::try_from(fd)? as SocketRaw;
+            if fd < 0 {
+                return Err(usize::try_from(-1).unwrap_err());
+            }
+            let raw = fd as usize as SocketRaw;
             Ok(unsafe { Self::from_raw(raw) })
         }
     }
@@ -68,7 +71,7 @@ impl SocketHandle {
         #[cfg(unix)]
         {
             let raw = i32::try_from(fd)?;
-            return Ok(unsafe { Self::from_raw(raw) });
+            Ok(unsafe { Self::from_raw(raw) })
         }
 
         #[cfg(windows)]
