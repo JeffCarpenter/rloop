@@ -103,8 +103,16 @@ impl UDPTransport {
         let stds: std::net::UdpSocket = sock.into();
         let socket = UdpSocket::from_std(stds);
 
-        let remote_addr = remote_addr_tup.map(|v| SocketAddr::new(IpAddr::from_str(&v.0).unwrap(), v.1));
-        let proto = proto_factory.bind(py).call0().unwrap();
+        let remote_addr = remote_addr_tup
+            .map(|v| {
+                IpAddr::from_str(&v.0)
+                    .map(|ip| SocketAddr::new(ip, v.1))
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!("Invalid IP address: {}", e))
+                    })
+            })
+            .transpose()?;
+        let proto = proto_factory.bind(py).call0()?;
 
         Ok(Self::new(
             py,
@@ -403,10 +411,10 @@ impl Handle for UDPReadHandle {
         let transport = pytransport.borrow(py);
 
         loop {
-            match {
+            let res = {
                 let trxstate = transport.state.borrow();
                 trxstate.socket.recv_from(&mut state.read_buf)
-            } {
+            }; match res {
                 Ok((size, addr)) => {
                     // Call the protocol's datagram_received method
                     // Now state is not borrowed, so sendto can work
